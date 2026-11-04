@@ -134,37 +134,91 @@ local function filter(cands, i, keep)
     return false
 end
 
+-- AND16[a + 1][b + 1] = a AND b for 4-bit masks (no `bit` module here).
+local AND16 = {}
+for a = 0, 15 do
+    AND16[a + 1] = {}
+    for b = 0, 15 do
+        local r = 0
+        for d = 1, 4 do
+            if HAS[a + 1][d] and HAS[b + 1][d] then r = r + BIT[d] end
+        end
+        AND16[a + 1][b + 1] = r
+    end
+end
+
+-- Arms present in every candidate (all_on) and in at least one (any_on).
+local function summary(list)
+    local all_on, any_on = 15, 0
+    for k = 1, #list do
+        local m = list[k]
+        all_on = AND16[all_on + 1][m + 1]
+        any_on = any_on + m - AND16[any_on + 1][m + 1]   -- OR
+    end
+    return all_on, any_on
+end
+
 -- Level 1a: arc consistency between neighbouring cells, to a fixpoint.
-local function propagateLocal(ctx, cands)
+-- `start` lists the cells to look at first (default: every cell); the
+-- fixpoint does not depend on that order, only the work does. Same result
+-- as filtering each cell with edgeState() of its neighbours, but each
+-- cell's "arms always / ever present" summary is kept up to date instead of
+-- rescanning neighbour lists: this loop is most of the generator's time.
+local function propagateLocal(ctx, cands, start)
     local nb, n = ctx.nb, ctx.n
     local queue, queued = {}, {}
-    for i = 1, n do queue[i] = i; queued[i] = true end
-    local head = 1
-    while head <= #queue do
+    local all_on, any_on = {}, {}
+    for i = 1, n do all_on[i], any_on[i] = summary(cands[i]) end
+    if start then
+        for k = 1, #start do
+            local i = start[k]
+            if not queued[i] then queue[#queue + 1] = i; queued[i] = true end
+        end
+    else
+        for i = 1, n do queue[i] = i; queued[i] = true end
+    end
+    local head, tail = 1, #queue
+    while head <= tail do
         local i = queue[head]; head = head + 1
         queued[i] = false
-        local need = {}
+        local nbi = nb[i]
+        -- Arms cell i must have (req_on) and must not have (req_off).
+        local req_on, req_off = 0, 0
         for d = 1, 4 do
-            local j = nb[i][d]
+            local j = nbi[d]
             if not j then
-                need[d] = false
+                req_off = req_off + BIT[d]
             else
-                need[d] = edgeState(cands, j, OPP[d])
+                local od = OPP[d]
+                if HAS[all_on[j] + 1][od] then
+                    req_on = req_on + BIT[d]
+                elseif not HAS[any_on[j] + 1][od] then
+                    req_off = req_off + BIT[d]
+                end
             end
         end
-        local res = filter(cands, i, function(m)
-            for d = 1, 4 do
-                local want = need[d]
-                if want ~= nil and hasArm(m, d) ~= want then return false end
+        local list = cands[i]
+        local out, kept = nil, 0
+        for k = 1, #list do
+            local m = list[k]
+            local am = AND16[m + 1]
+            if am[req_on + 1] == req_on and am[req_off + 1] == 0 then
+                kept = kept + 1
+                if out then out[kept] = m end
+            elseif not out then
+                out = {}
+                for q = 1, kept do out[q] = list[q] end
             end
-            return true
-        end)
-        if res == "empty" then return false end
-        if res then
+        end
+        if kept == 0 then return false end
+        if out then
+            cands[i] = out
+            all_on[i], any_on[i] = summary(out)
             for d = 1, 4 do
-                local j = nb[i][d]
+                local j = nbi[d]
                 if j and not queued[j] then
-                    queue[#queue + 1] = j
+                    tail = tail + 1
+                    queue[tail] = j
                     queued[j] = true
                 end
             end
@@ -202,14 +256,26 @@ local function components(ctx, cands)
     return comp
 end
 
--- Force the edge (i, d) on or off, from both sides.
+-- Force the edge (i, d) on or off, from both sides. The two cells and
+-- their neighbours go on ctx.touched, so the next local pass only has to
+-- start from there.
+local function touch(ctx, i)
+    local t, nb = ctx.touched, ctx.nb[i]
+    t[#t + 1] = i
+    for d = 1, 4 do
+        if nb[d] then t[#t + 1] = nb[d] end
+    end
+end
+
 local function forceEdge(ctx, cands, i, d, on)
     local j = ctx.nb[i][d]
-    if filter(cands, i, function(m) return hasArm(m, d) == on end) == "empty" then
-        return false
-    end
-    if j and filter(cands, j, function(m) return hasArm(m, OPP[d]) == on end) == "empty" then
-        return false
+    local res = filter(cands, i, function(m) return hasArm(m, d) == on end)
+    if res == "empty" then return false end
+    if res then touch(ctx, i) end
+    if j then
+        res = filter(cands, j, function(m) return hasArm(m, OPP[d]) == on end)
+        if res == "empty" then return false end
+        if res then touch(ctx, j) end
     end
     return true
 end
@@ -317,8 +383,11 @@ end
 
 -- Run deduction at `level` to a fixpoint. Returns false on contradiction.
 local function deduce(ctx, cands, level)
+    local start = nil   -- first pass: every cell
     while true do
-        if not propagateLocal(ctx, cands) then return false end
+        if not propagateLocal(ctx, cands, start) then return false end
+        ctx.touched = {}
+        start = ctx.touched
         if level < 1 then return true end
         local ok, changed = globalPass(ctx, cands, level)
         if not ok then return false end
@@ -374,9 +443,14 @@ local function newContext(rows, cols)
     return { rows = rows, cols = cols, n = rows * cols, nb = neighbours(rows, cols) }
 end
 
+-- Candidate lists are never changed in place (filtering builds a new
+-- list), so every cell of a given shape can start from one shared list.
+local ROTATIONS = {}
+for m = 0, 15 do ROTATIONS[m] = rotations(m) end
+
 local function initialCands(shapes)
     local cands = {}
-    for i = 1, #shapes do cands[i] = rotations(shapes[i]) end
+    for i = 1, #shapes do cands[i] = ROTATIONS[shapes[i]] end
     return cands
 end
 
@@ -393,6 +467,32 @@ function Solver.solveByDeduction(shapes, rows, cols, level)
     end
     if not isTree(ctx, masks) then return false end
     return true, masks
+end
+
+-- The lowest deduction level (up to max_level) that pins every tile, or nil.
+-- Same answer as calling solveByDeduction at 0, 1, 2... in turn, but each
+-- level carries on from where the level below stopped instead of starting
+-- over: every rule only removes rotations that cannot be in any solution,
+-- and a higher level runs all the lower rules too, so it reaches the same
+-- fixpoint either way (cross-checked against the fresh runs on thousands of
+-- random trees). The generator rates every candidate tree with this.
+function Solver.rate(shapes, rows, cols, max_level)
+    local ctx   = newContext(rows, cols)
+    local cands = initialCands(shapes)
+    for level = 0, max_level do
+        if not deduce(ctx, cands, level) then return nil end
+        local pinned = true
+        for i = 1, ctx.n do
+            if #cands[i] ~= 1 then pinned = false; break end
+        end
+        if pinned then
+            local masks = {}
+            for i = 1, ctx.n do masks[i] = cands[i][1] end
+            if isTree(ctx, masks) then return level end
+            return nil
+        end
+    end
+    return nil
 end
 
 -- Number of solutions, stopping at `limit` (default 2). Second result: the

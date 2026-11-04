@@ -19,6 +19,7 @@ local T               = require("ffi/util").template
 
 local ScreenBase         = require("screen_base")
 local MenuHelper         = require("menu_helper")
+local GenProgress        = require("gen_progress")
 local NetwalkBoard       = lrequire("board")
 local NetwalkBoardWidget = lrequire("board_widget")
 
@@ -76,9 +77,15 @@ function NetwalkScreen:init()
     local n     = self.plugin:getSetting("grid_n", NetwalkBoard.DEFAULT_N)
     self.board  = NetwalkBoard:new{ n = n }
     if not self.board:load(state) then
-        self.board:generate(self.plugin:getSetting("difficulty", "easy"))
+        self:_generate(self.plugin:getSetting("difficulty", "easy"))
     end
     ScreenBase.init(self)
+end
+
+-- Hard has to try many random networks before one needs the hardest
+-- reasoning; on a slow e-reader the progress bar shows if that takes a while.
+function NetwalkScreen:_generate(diff)
+    GenProgress.run(function(on_progress) self.board:generate(diff, on_progress) end)
 end
 
 function NetwalkScreen:serializeState()
@@ -202,7 +209,7 @@ function NetwalkScreen:onNewGame()
     local diff = self.plugin:getSetting("difficulty", "easy")
     local n    = self.plugin:getSetting("grid_n", NetwalkBoard.DEFAULT_N)
     self.board = NetwalkBoard:new{ n = n }
-    self.board:generate(diff)
+    self:_generate(diff)
     self.hint_cell = nil
     self.plugin:saveState(self.board:serialize())
     self:buildLayout()
