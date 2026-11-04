@@ -114,15 +114,18 @@ end
 -- Does this tree's puzzle land in the band asked for? Solving by deduction
 -- also proves the solution unique (every rule only removes rotations that
 -- cannot be part of any solution), so a puzzle that passes is unique.
+-- Solver.rate runs the levels one after the other on the same state, so a
+-- tree too easy for Hard costs one level-1 solve instead of a level-2 solve
+-- plus a level-1 one (same verdicts as before, about twice as fast).
 local function fits(masks, n, band, strict)
-    if not Solver.solveByDeduction(masks, n, n, band.solve) then return false end
-    if strict and band.beat and Solver.solveByDeduction(masks, n, n, band.beat) then
-        return false
-    end
+    local level = Solver.rate(masks, n, n, band.solve)
+    if not level then return false end
+    if strict and band.beat and level <= band.beat then return false end
     return true
 end
 
-function NetwalkBoard:generate(difficulty)
+-- on_progress (optional) is called with a 0..1 fraction between tries.
+function NetwalkBoard:generate(difficulty, on_progress)
     self.difficulty = difficulty or self.difficulty
     local n    = self.n
     local band = LEVELS[self.difficulty] or LEVELS.easy
@@ -132,12 +135,17 @@ function NetwalkBoard:generate(difficulty)
     -- band is rare, so after MAX_TRIES accept anything one level easier that
     -- still needs more than local rules; last resort, any unique puzzle.
     local masks
-    for _ = 1, MAX_TRIES do
+    local function progress(k)
+        if on_progress then on_progress(k / (2 * MAX_TRIES)) end
+    end
+    for k = 1, MAX_TRIES do
+        progress(k)
         local t = randomTree(n, src)
         if fits(t, n, band, true) then masks = t; break end
     end
     if not masks and band.solve == 2 then
-        for _ = 1, MAX_TRIES do
+        for k = 1, MAX_TRIES do
+            progress(MAX_TRIES + k)
             local t = randomTree(n, src)
             if fits(t, n, LEVELS.medium, true) then masks = t; break end
         end

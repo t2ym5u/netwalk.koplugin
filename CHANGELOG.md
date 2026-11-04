@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-11-04
+
+### Changed
+- Faster puzzle generation, same puzzles: each candidate network is rated
+  one reasoning level after the other instead of from scratch, and the
+  local-rule pass is quicker. Hard went from up to 55-75 ms on a desktop
+  (about 2 s on a Kobo) to roughly a third of that.
+- A progress bar appears if Hard takes more than a moment to generate.
+
 ## [1.0.3] - 2026-11-03
 
 ### Changed

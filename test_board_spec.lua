@@ -316,4 +316,70 @@ describe("Netwalk", function()
             assert.is_false(b:load({ n = 5, tiles = { 1, 2 }, solution = { 1, 2 } }))
         end)
     end)
+    -- 1.1.0: faster rating (Solver.rate, incremental local rule).
+    describe("generator speed-up (1.1.0)", function()
+        it("builds the same puzzles per seed as 1.0.x", function()
+            -- Fingerprints taken with the 1.0.3 generator under this same
+            -- interpreter (math.random differs between Lua and LuaJIT).
+            local want = { 767384595, 603765974, 74585123, 43966375 }
+            local cfgs = { {5, "easy", 1}, {7, "medium", 2}, {9, "hard", 3}, {11, "hard", 4} }
+            for k, cfg in ipairs(cfgs) do
+                math.randomseed(cfg[3])
+                local b = Board:new{ n = cfg[1] }
+                b:generate(cfg[2])
+                local h = 0
+                for r = 1, cfg[1] do
+                    for c = 1, cfg[1] do
+                        h = (h * 31 + b.tiles[r][c] * 16 + b.solution[r][c]) % 1000000007
+                    end
+                end
+                assert.are.equal(want[k], h, "config " .. k)
+            end
+        end)
+
+        it("Solver.rate is the lowest level solveByDeduction cracks", function()
+            local randomTree
+            local i = 1
+            while true do
+                local name, v = debug.getupvalue(Board.generate, i)
+                if not name then break end
+                if name == "randomTree" then randomTree = v end
+                i = i + 1
+            end
+            assert.is_function(randomTree)
+            local seen = {}
+            for seed = 1, 60 do
+                math.randomseed(seed)
+                local n = ({ 5, 7, 9 })[seed % 3 + 1]
+                local mid = math.floor((n + 1) / 2)
+                local shapes = randomTree(n, (mid - 1) * n + mid)
+                for q = 1, #shapes do
+                    for _ = 1, math.random(0, 3) do shapes[q] = Solver.rotateCW(shapes[q]) end
+                end
+                local fresh
+                for level = 0, 2 do
+                    if Solver.solveByDeduction(shapes, n, n, level) then fresh = level; break end
+                end
+                assert.are.equal(fresh, Solver.rate(shapes, n, n, 2), "seed " .. seed)
+                seen[tostring(fresh)] = true
+            end
+            assert.is_true(seen["0"] and seen["1"])
+        end)
+
+        it("reports progress and stays quick on 11x11 Hard", function()
+            local calls = 0
+            local t0 = os.clock()
+            for seed = 1, 3 do
+                math.randomseed(seed)
+                local b = Board:new{ n = 11 }
+                b:generate("hard", function(f)
+                    assert.is_true(f >= 0 and f <= 1)
+                    calls = calls + 1
+                end)
+            end
+            assert.is_true(calls > 0)
+            -- ~20 ms each in LuaJIT; very generous for plain Lua.
+            assert.is_true(os.clock() - t0 < 10)
+        end)
+    end)
 end)
