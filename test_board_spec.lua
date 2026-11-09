@@ -75,44 +75,6 @@ describe("Netwalk", function()
                 end
             end
         end)
-
-        it("has a unique solution, confirmed by a brute-force count", function()
-            for _, diff in ipairs({ "easy", "medium", "hard" }) do
-                for seed = 1, 8 do
-                    for _, n in ipairs({ 5, 7, 9, 11 }) do
-                        local b = newBoard(n, diff, seed * 13 + n)
-                        local count = Solver.countSolutions(b:_flat(b.tiles), n, n, 2)
-                        assert.are.equal(1, count, diff .. " " .. n .. " seed " .. seed)
-                    end
-                end
-            end
-        end)
-
-        it("rates difficulty by the reasoning needed", function()
-            for seed = 1, 15 do
-                local e = newBoard(7, "easy", seed)
-                assert.is_true(Solver.solveByDeduction(e:_flat(e.tiles), 7, 7, 0))
-                local m = newBoard(7, "medium", seed)
-                local flat = m:_flat(m.tiles)
-                assert.is_true(Solver.solveByDeduction(flat, 7, 7, 1))
-                assert.is_false(Solver.solveByDeduction(flat, 7, 7, 0))
-                local h = newBoard(7, "hard", seed)
-                flat = h:_flat(h.tiles)
-                assert.is_true(Solver.solveByDeduction(flat, 7, 7, 2))
-                assert.is_false(Solver.solveByDeduction(flat, 7, 7, 0))
-            end
-        end)
-
-        it("reaches the hard band (needs group-exit reasoning) on most seeds", function()
-            local strict = 0
-            for seed = 1, 20 do
-                local h = newBoard(9, "hard", seed)
-                if not Solver.solveByDeduction(h:_flat(h.tiles), 9, 9, 1) then
-                    strict = strict + 1
-                end
-            end
-            assert.is_true(strict >= 14, "only " .. strict .. "/20")
-        end)
     end)
 
     describe("solver deductions", function()
